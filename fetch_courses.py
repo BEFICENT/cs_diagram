@@ -3,7 +3,6 @@ import json
 import requests
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-import subprocess
 import os
 
 COURSES_DIR = 'courses'
@@ -11,19 +10,9 @@ COURSES_DIR = 'courses'
 BASE = 'https://suis.sabanciuniv.edu/prod/'
 LIST_URL = BASE + 'SU_DEGREE.p_list_degree?P_LEVEL=UG&P_LANG=EN&P_PRG_TYPE='
 
+# Filter to only process BSCS program
 PROGRAM_FILES = {
-    'BSBIO': 'BIO.json',
     'BSCS': 'CS.json',
-    'BAECON': 'ECON.json',
-    'BSEE': 'EE.json',
-    'BSMS': 'IE.json',
-    'BSMAT': 'MAT.json',
-    'BSME': 'ME.json',
-    'BSDSA': 'DSA.json',  # Adding Data Science and Analytics program
-    'BAMAN': 'MAN.json',  # Management program
-    'BAPSIR': 'PSIR.json',  # Political Science and International Relations
-    'BAPSY': 'PSY.json',  # Psychology program
-    'BAVACD': 'VACD.json',  # Visual Arts and Visual Communication Design
 }
 
 # Predefined faculty courses - these are specific courses, not based on course attributes
@@ -202,12 +191,8 @@ def crawl_program(code, term):
         name_attr = a.get('name', '')
         # Skip non-category anchors with improved pattern matching
         if not (name_attr.endswith('_CEL') or name_attr.endswith('_REQ') or
-                name_attr.endswith('_AEL') or name_attr.endswith('_FEL') or name_attr.endswith('_ARE') or name_attr.endswith('_FRE') or
-                name_attr == 'UC_FENS' or name_attr == 'UC_FASS' or
-                name_attr.startswith('main') or
-                # Add more specific patterns for different program types
-                '_COR' in name_attr or '_C1' in name_attr or '_C2' in name_attr or '_CE1' in name_attr or '_CE2' in name_attr or
-                '_PHL' in name_attr or '_MEL' in name_attr):  # Sometimes 'main' is used for categories
+                name_attr.endswith('_AEL') or name_attr.endswith('_ARE') or
+                name_attr.startswith('main')):
             continue
 
         # Get the category title from the parent element's text or the next bold text
@@ -306,7 +291,7 @@ def crawl_program(code, term):
             new_rows = parse_table(table, el_type)
             for row in new_rows:
                 course_id = f"{row['Major']}{row['Code']}"
-                if course_id not in seen_courses:
+                if course_id not in seen_courses :
                     results.append(row)
                     seen_courses.add(course_id)
 
@@ -393,7 +378,7 @@ def crawl_program(code, term):
 
     # Fetch prerequisite details for selected courses
     for row in results:
-        if row['EL_Type'] == 'required' or (
+        if row['EL_Type'] == 'required' or row['EL_Type'] == 'university' or (
             row['EL_Type'] in {'core', 'area'} and row['Major'] in {'CS', 'DSA'}
         ):
             details = get_course_details(term, row['Major'], row['Code'])
@@ -403,7 +388,6 @@ def crawl_program(code, term):
 
 
 def main():
-
     os.makedirs(COURSES_DIR, exist_ok=True)
 
     programs = get_program_codes()
@@ -414,18 +398,21 @@ def main():
         if not term:
             continue
         data = crawl_program(code, term)
-        full_path = os.path.join(COURSES_DIR, fname)
         if not data:
             print(f'No data found for {code} ({fname})')
             continue
+
+        # Filter out courses without extra details
+        filtered_data = [course for course in data if course.get('Prerequisites') or course.get('Corequisites')]
+        if not filtered_data:
+            print(f'No detailed courses found for {code} ({fname})')
+            continue
+
+        full_path = os.path.join(COURSES_DIR, fname)
+        # Corrected the file handling for json.dump
         with open(full_path, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(filtered_data, f, indent=2)
         print(f'Updated {fname} with {len(data)} records')
-
-    # Optionally run update_credits.py after updating course files
-    print("\nRunning update_credits.py to update credits in JSON files...\n")
-    subprocess.run(['python', 'update_credits.py'], check=True)
-
 
 if __name__ == '__main__':
     main()
