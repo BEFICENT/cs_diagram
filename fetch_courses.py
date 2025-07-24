@@ -69,17 +69,54 @@ def _extract_detail_text(soup, label):
 
 
 def get_course_details(term, major, code):
-    """Return prerequisites and corequisites for a course."""
-    url = (
+    """Return prerequisites, corequisites, and last offered term for a course."""
+    # First try the URL that contains Last Offered Terms information
+    last_offered_url = f"{BASE}sabanci_www.p_get_courses?levl_code=UG&subj_code={major}&crse_numb={code}&lang=eng"
+    last_offered_term = ''
+
+    try:
+        resp = requests.get(last_offered_url)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'lxml')
+
+        # Extract last offered term using the working logic
+        last_offered_header = soup.find('b', string=lambda text: text and 'Last Offered Terms' in text)
+        if last_offered_header:
+            table = last_offered_header.find_parent('table')
+            if table:
+                rows = table.find_all('tr')
+                header_row_index = -1
+                for i, row in enumerate(rows):
+                    if 'Last Offered Terms' in row.get_text():
+                        header_row_index = i
+                        break
+
+                if header_row_index >= 0 and header_row_index + 1 < len(rows):
+                    data_row = rows[header_row_index + 1]
+                    cells = data_row.find_all('td')
+                    if cells and len(cells) >= 1:
+                        last_offered_term = cells[0].get_text(strip=True)
+    except Exception as e:
+        print(f"Warning: Could not fetch last offered term for {major} {code}: {e}")
+
+    # Then get prerequisites and corequisites from the original URL
+    detail_url = (
         f"{BASE}bwckctlg.p_disp_course_detail?cat_term_in={term}"
         f"&subj_code_in={major}&crse_numb_in={code}"
     )
-    resp = requests.get(url)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, 'lxml')
-    prereq = _extract_detail_text(soup, 'Prerequisites')
-    coreq = _extract_detail_text(soup, 'Corequisites')
-    return {'Prerequisites': prereq, 'Corequisites': coreq}
+
+    try:
+        resp = requests.get(detail_url)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'lxml')
+        prereq = _extract_detail_text(soup, 'Prerequisites')
+        coreq = _extract_detail_text(soup, 'Corequisites')
+    except Exception as e:
+        print(f"Warning: Could not fetch prerequisites/corequisites for {major} {code}: {e}")
+        prereq = ''
+        coreq = ''
+
+    return {'Prerequisites': prereq, 'Corequisites': coreq, 'Last_Offered_Term': last_offered_term}
 
 
 def get_program_codes():
@@ -206,7 +243,7 @@ def crawl_program(code, term):
         el_type = None
         if name_attr.endswith('_CEL') or '_COR' in name_attr or '_CE1' in name_attr or '_C1' in name_attr:
             el_type = 'core'
-        elif name_attr.endswith('_CE2') or name_attr.endswith('_PHL') or name_attr.endswith('_C2') or '_MEL' in name_attr:
+        elif name_attr.endswith('_CE2' or '_PHL') or name_attr.endswith('_C2') or '_MEL' in name_attr:
             el_type = 'extra_attribute'
         elif name_attr.endswith('_REQ'):
             el_type = 'required'
@@ -412,7 +449,7 @@ def main():
         # Corrected the file handling for json.dump
         with open(full_path, 'w') as f:
             json.dump(filtered_data, f, indent=2)
-        print(f'Updated {fname} with {len(data)} records')
+        print(f'Updated {fname} with {len(filtered_data)} records')
 
 if __name__ == '__main__':
     main()
