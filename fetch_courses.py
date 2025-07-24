@@ -59,6 +59,40 @@ def is_faculty_course(major, code):
     return get_faculty_for_course(major, code) is not None
 
 
+def _extract_detail_text(soup, label):
+    """Extract text following a label span on the course detail page."""
+    span = soup.find('span', string=lambda s: s and label in s)
+    if not span:
+        return ''
+    parts = []
+    started = False
+    for sib in span.next_siblings:
+        if getattr(sib, 'name', None) == 'br':
+            if started:
+                break
+            started = True
+            continue
+        if isinstance(sib, str):
+            parts.append(sib.strip())
+        else:
+            parts.append(sib.get_text(' ', strip=True))
+    return ' '.join(p for p in parts if p).strip()
+
+
+def get_course_details(term, major, code):
+    """Return prerequisites and corequisites for a course."""
+    url = (
+        f"{BASE}bwckctlg.p_disp_course_detail?cat_term_in={term}"
+        f"&subj_code_in={major}&crse_numb_in={code}"
+    )
+    resp = requests.get(url)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, 'lxml')
+    prereq = _extract_detail_text(soup, 'Prerequisites')
+    coreq = _extract_detail_text(soup, 'Corequisites')
+    return {'Prerequisites': prereq, 'Corequisites': coreq}
+
+
 def get_program_codes():
     resp = requests.get(LIST_URL)
     resp.raise_for_status()
@@ -356,6 +390,14 @@ def crawl_program(code, term):
                 if course_id not in seen_courses:
                     results.append(row)
                     seen_courses.add(course_id)
+
+    # Fetch prerequisite details for selected courses
+    for row in results:
+        if row['EL_Type'] == 'required' or (
+            row['EL_Type'] in {'core', 'area'} and row['Major'] in {'CS', 'DSA'}
+        ):
+            details = get_course_details(term, row['Major'], row['Code'])
+            row.update(details)
 
     return results
 
